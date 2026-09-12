@@ -148,17 +148,27 @@ def run_once(config: dict) -> None:
     log.info(f"Found {len(disk_files)} media files on disk under scan roots")
 
     # --- Diff (both directions collapse to directory scans) ---
-    stale = sorted({os.path.dirname(p) for p in plex_files if not os.path.exists(p)})
-    unknown = sorted({os.path.dirname(p) for p in disk_files - plex_files})
+    stale_by_dir: dict[str, list[str]] = {}
+    for p in plex_files:
+        if not os.path.exists(p):
+            stale_by_dir.setdefault(os.path.dirname(p), []).append(p)
+    unknown_by_dir: dict[str, list[str]] = {}
+    for p in disk_files - plex_files:
+        unknown_by_dir.setdefault(os.path.dirname(p), []).append(p)
+    stale = sorted(stale_by_dir)
+    unknown = sorted(unknown_by_dir)
     wanted = sorted(set(stale) | set(unknown))
+    n_stale_files = sum(len(v) for v in stale_by_dir.values())
+    n_unknown_files = sum(len(v) for v in unknown_by_dir.values())
     log.info(
         f"Diff: {len(plex_files)} Plex paths, {len(disk_files)} disk files, "
-        f"{len(stale)} stale dirs, {len(unknown)} unknown dirs"
+        f"{n_stale_files} stale files in {len(stale)} dirs, "
+        f"{n_unknown_files} unknown files in {len(unknown)} dirs"
     )
     for d in stale:
-        log.info(f"Stale Plex path, needs rescan: {d}")
+        log.info(f"Stale Plex path, needs rescan: {d} ({len(stale_by_dir[d])} dead, e.g. {stale_by_dir[d][0]})")
     for d in unknown:
-        log.info(f"On disk but unknown to Plex, needs rescan: {d}")
+        log.info(f"On disk but unknown to Plex, needs rescan: {d} ({len(unknown_by_dir[d])} new, e.g. {unknown_by_dir[d][0]})")
 
     if not wanted:
         log.info("Complete: everything in sync, nothing to trigger")

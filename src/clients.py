@@ -42,7 +42,13 @@ class PlexClient:
         return out
 
     def list_section_files(self, section_id: str | int, media_type: int) -> list[str]:
-        """Return every Part.file path in a section (paginated)."""
+        """Return every Part.file path in a section (paginated by item offset).
+
+        The offset counts ITEMS (Videos), not files: multi-part items have
+        several files per item and multi-episode files share one file across
+        items, so advancing by file count skips items. Also, a missing
+        totalSize must not end the walk after one page.
+        """
         files: list[str] = []
         start = 0
         while True:
@@ -52,19 +58,18 @@ class PlexClient:
                 **{"X-Plex-Container-Start": start, "X-Plex-Container-Size": self.page_size},
             )
             root = ET.fromstring(content)
-            container = root
-            batch = 0
-            for video in container.iter("Video"):
+            videos = list(root.iter("Video"))
+            if not videos:
+                break
+            for video in videos:
                 for media in video.iter("Media"):
                     for part in media.iter("Part"):
                         f = part.attrib.get("file")
                         if f:
                             files.append(f)
-                            batch += 1
-            total = int(container.attrib.get("totalSize", start + batch))
-            start += batch
-            # totalSize==0 can lie on some builds; stop when a page comes back empty
-            if batch == 0 or start >= total:
+            start += len(videos)
+            total_raw = root.attrib.get("totalSize")
+            if total_raw is not None and start >= int(total_raw):
                 break
         return files
 
