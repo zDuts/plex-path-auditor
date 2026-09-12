@@ -83,6 +83,51 @@ def norm(p: str) -> str:
     return os.path.normpath(p)
 
 
+def _ep_tag(path: str) -> str | None:
+    """Extract normalized SxxExx tag from a filename, or None."""
+    m = re.search(r"[Ss](\d{1,2})[Ee](\d{1,3})", os.path.basename(path))
+    return f"S{int(m.group(1)):02d}E{int(m.group(2)):02d}" if m else None
+
+
+def _find_renames(stale_by_dir: dict[str, list[str]], unknown_by_dir: dict[str, list[str]]) -> list[tuple[str, str, str, str]]:
+    """Match stale vs unknown files as probable renames. Returns (dir, old, new, basis).
+
+    A dir flagged on BOTH sides means something changed there. Pairs are formed by:
+    - TV: same episode tag (SxxExx), different basename (e.g. spaces-vs-dots rename)
+    - Fallback: exactly one stale + one unknown file with the same container
+      (typical *arr upgrade swapping the file, movies included)
+    """
+    pairs: list[tuple[str, str, str, str]] = []
+    ext = lambda p: p.rsplit(".", 1)[-1].lower() if "." in p else ""
+    for d in sorted(set(stale_by_dir) & set(unknown_by_dir)):
+        old_files = stale_by_dir[d]
+        new_files = unknown_by_dir[d]
+        # Strict 1-vs-1 dirs: something was swapped here (rename or upgrade).
+        if len(old_files) == 1 and len(new_files) == 1:
+            o, n = old_files[0], new_files[0]
+            if os.path.basename(o) != os.path.basename(n):
+                t_old, t_new = _ep_tag(o), _ep_tag(n)
+                if t_old and t_old == t_new:
+                    pairs.append((d, o, n, f"same episode {t_old}"))
+                elif ext(o) == ext(n):
+                    pairs.append((d, o, n, "single swap, same container"))
+            continue
+        # Busy dirs: only pair by matching episode tag (never pair leftovers -
+        # a deleted file plus an unrelated new file are not a rename).
+        old_by_tag: dict[str, list[str]] = {}
+        for p in old_files:
+            t = _ep_tag(p)
+            if t:
+                old_by_tag.setdefault(t, []).append(p)
+        for p in new_files:
+            t = _ep_tag(p)
+            if t and t in old_by_tag:
+                for old in old_by_tag[t]:
+                    if os.path.basename(old) != os.path.basename(p):
+                        pairs.append((d, old, p, f"same episode {t}"))
+    return pairs
+
+
 def under_roots(path: str, roots: list[str]) -> bool:
     """True if path lives under one of the scan roots."""
     for r in roots:
@@ -160,10 +205,14 @@ def run_once(config: dict) -> None:
     wanted = sorted(set(stale) | set(unknown))
     n_stale_files = sum(len(v) for v in stale_by_dir.values())
     n_unknown_files = sum(len(v) for v in unknown_by_dir.values())
+    renames = _find_renames(stale_by_dir, unknown_by_dir)
+    for d, old, new, basis in renames:
+        log.info(f"Probable rename ({basis}): '{os.path.basename(old)}' -> '{os.path.basename(new)}' in {d}")
     log.info(
         f"Diff: {len(plex_files)} Plex paths, {len(disk_files)} disk files, "
         f"{n_stale_files} stale files in {len(stale)} dirs, "
-        f"{n_unknown_files} unknown files in {len(unknown)} dirs"
+        f"{n_unknown_files} unknown files in {len(unknown)} dirs, "
+        f"{len(renames)} probable renames"
     )
     for d in stale:
         log.info(f"Stale Plex path, needs rescan: {d} ({len(stale_by_dir[d])} dead, e.g. {stale_by_dir[d][0]})")
