@@ -1,0 +1,25 @@
+services:
+  plex-path-auditor:
+    image: ghcr.io/zduts/plex-path-auditor:latest
+    container_name: plex-path-auditor
+    environment:
+      - PLEX_URL=http://your-plex:32400
+      - PLEX_TOKEN=your_plex_token
+      - AUTOSCAN_URL=http://your-autoscan:3030
+      - AUTOSCAN_USER=your_autoscan_user
+      - AUTOSCAN_PASS=your_autoscan_password
+      # Library roots walked on disk AND used to scope Plex paths.
+      - SCAN_ROOTS=/mnt/plex/TV,/mnt/plex/Movies
+      - MEDIA_EXTS=mkv,mp4,avi,m4v,ts
+      - RUN_INTERVAL=6h
+      - DRY_RUN=true  # set false once the logs look right
+      - COOLDOWN_HOURS=24  # don't re-trigger the same dir within this window
+      - STATE_FILE=/config/triggered.json
+      - PAGE_SIZE=500  # Plex pagination window
+      - BATCH_SIZE=50  # max dirs per autoscan request
+    volumes:
+      # Absolute host path - triggered.json must survive redeploys:
+      - /opt/plex-path-auditor/config:/config
+      # Same view of the media as Plex (read-only is enough):
+      - /mnt:/mnt:ro
+    restart: unless-stopped
