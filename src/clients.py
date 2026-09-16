@@ -92,6 +92,56 @@ class SonarrClient:
             log.debug(f"sonarr naming config failed: {e}")
             return {}
 
+    def set_naming_rename(self, enabled: bool) -> bool:
+        """Flip Sonarr renameEpisodes via GET-modify-PUT on /api/v3/config/naming.
+
+        Reads the full config, flips the one key, writes it back, and verifies.
+        True only if the verified value matches.
+        """
+        try:
+            resp = requests.get(f"{self.url}/api/v3/config/naming", headers=self.headers, timeout=30)
+            resp.raise_for_status()
+            cfg = resp.json()
+            if not isinstance(cfg, dict):
+                return False
+            cfg["renameEpisodes"] = enabled
+            put = requests.put(f"{self.url}/api/v3/config/naming", headers=self.headers, json=cfg, timeout=30)
+            if not 200 <= put.status_code < 300:
+                log.warning(f"sonarr naming PUT returned {put.status_code}: {put.text[:200]}")
+                return False
+            want = True if enabled else False
+            return self.get_naming().get("renameEpisodes") == want
+        except Exception as e:
+            log.warning(f"sonarr set_naming_rename failed: {e}")
+            return False
+
+    def get_command(self, command_id: int) -> dict:
+        """Fetch a command resource by id. Empty dict on failure."""
+        try:
+            resp = requests.get(f"{self.url}/api/v3/command/{command_id}", headers=self.headers, timeout=30)
+            resp.raise_for_status()
+            data = resp.json()
+            return data if isinstance(data, dict) else {}
+        except Exception as e:
+            log.debug(f"sonarr get_command failed: {e}")
+            return {}
+
+    def wait_command(self, command_id: int, timeout_s: int = 300, poll_s: int = 10) -> bool:
+        """Poll a command until completed. True only on completed (failed/aborted/timeout -> False)."""
+        import time as _time
+
+        deadline = _time.time() + max(1, timeout_s)
+        while _time.time() < deadline:
+            status = str(self.get_command(command_id).get("status", "")).lower()
+            if status == "completed":
+                return True
+            if status in ("failed", "aborted", "cancelled"):
+                log.warning(f"sonarr command {command_id} ended with status '{status}'")
+                return False
+            _time.sleep(max(1, poll_s))
+        log.warning(f"sonarr command {command_id} timed out after {timeout_s}s")
+        return False
+
     def get_series(self) -> list[dict]:
         """Return all series (each with id, title, path)."""
         resp = requests.get(f"{self.url}/api/v3/series", headers=self.headers, timeout=30)
@@ -111,8 +161,8 @@ class SonarrClient:
         data = resp.json()
         return data if isinstance(data, list) else []
 
-    def rename_files(self, series_id: int, file_ids: list[int]) -> bool:
-        """Queue a RenameFiles command for episode file IDs. True on 2xx."""
+    def rename_files(self, series_id: int, file_ids: list[int]) -> int | None:
+        """Queue a RenameFiles command. Returns the command id, or None on failure."""
         try:
             resp = requests.post(
                 f"{self.url}/api/v3/command",
@@ -121,9 +171,16 @@ class SonarrClient:
                 timeout=30,
             )
             if 200 <= resp.status_code < 300:
-                return True
+                data = resp.json()
+                if isinstance(data, dict) and data.get("id") is not None:
+                    return int(data["id"])
+                log.warning("sonarr rename command accepted but returned no id")
+                return None
             log.warning(f"sonarr rename command returned {resp.status_code}: {resp.text[:200]}")
-            return False
+            return None
+        except Exception as e:
+            log.warning(f"sonarr rename command failed: {e}")
+            return None
         except Exception as e:
             log.warning(f"sonarr rename command failed: {e}")
             return False

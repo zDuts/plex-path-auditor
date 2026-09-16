@@ -77,6 +77,12 @@ def load_config() -> dict:
         "sonarr_api_key": os.getenv("SONARR_API_KEY", ""),
         # Fire Sonarr RenameFiles for hash files (false = only log the preview).
         "sonarr_auto_rename": os.getenv("SONARR_AUTO_RENAME", "false").lower() == "true",
+        # Flip Sonarr's own renameEpisodes toggle ON around the RenameFiles
+        # command (for setups that keep it OFF): enable -> preview -> fire ->
+        # wait -> restore OFF. Fail-closed at every step.
+        "sonarr_toggle_rename": os.getenv("SONARR_TOGGLE_RENAME", "false").lower() == "true",
+        # Seconds to wait for a RenameFiles command to complete.
+        "sonarr_cmd_timeout": int(os.getenv("SONARR_CMD_TIMEOUT", "300")),
     }
 
 
@@ -191,6 +197,14 @@ def walk_media_files(roots: list[str], exts: set[str], skip_hash_names: bool = T
 SEASON_DIR = re.compile(r"[Ss]eason\s*(\d+)\s*$")
 
 
+def _restore_sonarr_renaming(sonarr) -> None:
+    """Restore Sonarr renameEpisodes to OFF and verify."""
+    if sonarr.set_naming_rename(False):
+        log.info("Restored Sonarr renaming OFF")
+    else:
+        log.error("FAILED to restore Sonarr renaming OFF - fix manually in Sonarr settings!")
+
+
 def _process_hash_files(config: dict, sonarr, hash_files: list[str], triggered: dict[str, float], now: float) -> None:
     """Resolve debrid placeholder files via Sonarr and optionally rename them.
 
@@ -202,19 +216,30 @@ def _process_hash_files(config: dict, sonarr, hash_files: list[str], triggered: 
     """
     if not hash_files:
         return
+    toggle_us = False
     naming = sonarr.get_naming()
     if naming and not naming.get("renameEpisodes", True):
-        log.info(
-            "Sonarr episode renaming is OFF - rename preview would always be empty, "
-            "skipping it (hash files still flow to autoscan when SKIP_HASH_NAMES=false)"
-        )
-        if config["sonarr_auto_rename"]:
-            log.warning("SONARR_AUTO_RENAME=true but Sonarr renaming is OFF - rename commands will no-op")
-        return
+        if config["dry_run"]:
+            log.info("[DRY RUN] Would flip Sonarr renaming ON around this run (SONARR_TOGGLE_RENAME)")
+            return
+        if not config["sonarr_toggle_rename"]:
+            log.info(
+                "Sonarr episode renaming is OFF - rename preview would always be empty, "
+                "skipping it (set SONARR_TOGGLE_RENAME=true to flip it around each run, "
+                "or SKIP_HASH_NAMES=false for autoscan-only coverage)"
+            )
+            return
+        log.info("Flipping Sonarr renaming ON for this run")
+        if not sonarr.set_naming_rename(True):
+            log.error("Could not enable Sonarr renaming - aborting Sonarr pass")
+            return
+        toggle_us = True
     try:
         series = sonarr.get_series()
     except Exception as e:
         log.error(f"Sonarr series list failed: {e}")
+        if toggle_us:
+            _restore_sonarr_renaming(sonarr)
         return
     by_path: dict[str, tuple[int, str]] = {}
     for s in series:
@@ -269,11 +294,22 @@ def _process_hash_files(config: dict, sonarr, hash_files: list[str], triggered: 
             log.info(f"Set SONARR_AUTO_RENAME=true to apply ({g['title']} S{season})")
             continue
         ids = [r["episodeFileId"] for r in hits if r.get("episodeFileId") is not None]
-        if ids and sonarr.rename_files(series_id, ids):
-            log.info(f"Sonarr RenameFiles queued for {len(ids)} files ({g['title']} S{season}) - rescan will pick them up")
+        if not ids:
+            log.error(f"No episode file IDs in Sonarr preview for {g['title']} S{season}")
+            continue
+        cmd_id = sonarr.rename_files(series_id, ids)
+        if cmd_id is None:
+            log.error(f"Sonarr RenameFiles failed to queue for {g['title']} S{season}")
+            continue
+        log.info(f"Sonarr RenameFiles queued (command {cmd_id}) for {len(ids)} files ({g['title']} S{season})")
+        if sonarr.wait_command(cmd_id, config["sonarr_cmd_timeout"]):
+            log.info(f"Sonarr RenameFiles completed ({g['title']} S{season}) - rescan will pick them up")
             triggered[state_key] = now
         else:
-            log.error(f"Sonarr RenameFiles failed for {g['title']} S{season}")
+            log.error(f"Sonarr RenameFiles did not complete for {g['title']} S{season} - will retry next run")
+
+    if toggle_us:
+        _restore_sonarr_renaming(sonarr)
 
 
 def run_once(config: dict) -> None:

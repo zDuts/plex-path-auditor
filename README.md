@@ -17,9 +17,9 @@ Only what you watch is irrelevant here — this audits the whole library by desi
 
 ## Sonarr hash-file renames
 
-Files like `1c39bf4d….mkv` are debrid placeholders Sonarr hasn't renamed yet — Plex can't parse an episode from a hash, so no rescan will ever fix them. With `SONARR_URL` + `SONARR_API_KEY` set, the auditor matches them to series/seasons via Sonarr's series paths, previews with `GET /api/v3/rename?seriesId&seasonNumber`, and (with `SONARR_AUTO_RENAME=true`) fires `RenameFiles` for exactly those file IDs. Rename cooldowns reuse the state file (`sonarr:{seriesId}:{season}` keys, same `COOLDOWN_HOURS`) and never enter the autoscan batch. If Sonarr reports nothing to rename, the files likely need manual import in Sonarr first.
+Files like `1c39bf4d….mkv` are debrid placeholders Sonarr hasn't renamed yet — Plex can't parse an episode from a hash, so no rescan will ever fix them. With `SONARR_URL` + `SONARR_API_KEY` set, the auditor matches them to series/seasons via Sonarr's series paths, previews with `GET /api/v3/rename?seriesId&seasonNumber`, and (with `SONARR_AUTO_RENAME=true`) fires `RenameFiles` for exactly those file IDs, waiting for completion (`SONARR_CMD_TIMEOUT`). Rename cooldowns reuse the state file (`sonarr:{seriesId}:{season}` keys, same `COOLDOWN_HOURS`) and never enter the autoscan batch. If Sonarr reports nothing to rename, the files likely need manual import in Sonarr first.
 
-If Sonarr's own **Rename Episodes** toggle is off (checked via `GET /api/v3/config/naming`), the preview would always be empty, so the auditor skips it with one log line instead of pointless per-season calls. To still get those directories rescanned, set `SKIP_HASH_NAMES=false` — hash files rejoin the normal Plex diff as unknown files and their dirs go to autoscan. Note Plex still can't match a hash name, so those dirs re-fire every cooldown window until Sonarr renames them; that's the price of the rescan coverage.
+If Sonarr's own **Rename Episodes** toggle is off (checked via `GET /api/v3/config/naming`), set `SONARR_TOGGLE_RENAME=true` to flip it on around each run — same pattern as the Plex intro toggle: enable (verified) → preview → fire → wait for completion → restore off (verified, fail-closed). To only get those directories rescanned instead, keep the toggle off and set `SKIP_HASH_NAMES=false` — hash files rejoin the normal Plex diff as unknown files and their dirs go to autoscan. Note Plex still can't match a hash name, so those dirs re-fire every cooldown window until Sonarr renames them; that's the price of the rescan coverage.
 
 ## Requirements
 
@@ -61,6 +61,8 @@ Sample compose — see `docker-compose.example.yml`. Start with `DRY_RUN=true`, 
 | `SONARR_URL` | no | — | Sonarr base URL (e.g. `http://sonarr:8989`). Enables hash-file resolution; unset = placeholders only logged as skipped |
 | `SONARR_API_KEY` | no | — | Sonarr API key |
 | `SONARR_AUTO_RENAME` | no | `false` | Fire Sonarr `RenameFiles` for hash files (`false` = only log the rename preview). Renamed files get proper `SxxExx` names, then the normal Plex/autoscan path picks them up |
+| `SONARR_TOGGLE_RENAME` | no | `false` | Flip Sonarr's own `renameEpisodes` on around each run (for setups that keep it off): enable → preview → fire → wait → restore off, all verified |
+| `SONARR_CMD_TIMEOUT` | no | `300` | Seconds to wait for a `RenameFiles` command to complete |
 
 ## Building locally
 

@@ -21,12 +21,15 @@ services:
       - MAX_STALE_PCT=25  # abort if more than this % of Plex paths is missing (dead mount guard; 100 = off)
       - SKIP_HASH_NAMES=true  # hold 32-hex placeholders out of the Plex diff (resolved Sonarr-side)
       # Optional Sonarr: resolve + rename hash files (Plex can never match them).
-      # If Sonarr's own Rename Episodes toggle is OFF, previews are skipped
-      # automatically (they'd always be empty) - set SKIP_HASH_NAMES=false above
+      # If Sonarr's own Rename Episodes toggle is OFF, set SONARR_TOGGLE_RENAME
+      # to flip it on around each run (enable -> preview -> fire -> wait ->
+      # restore off, all verified). Otherwise set SKIP_HASH_NAMES=false above
       # to still send those dirs to autoscan.
       - SONARR_URL=http://your-sonarr:8989
       - SONARR_API_KEY=your_sonarr_api_key
-      - SONARR_AUTO_RENAME=false  # true = fire RenameFiles (false = log preview only; no-op if Sonarr renaming is off)
+      - SONARR_AUTO_RENAME=false  # true = fire RenameFiles (false = log preview only)
+      - SONARR_TOGGLE_RENAME=false
+      - SONARR_CMD_TIMEOUT=300  # seconds to wait for RenameFiles completion
     volumes:
       # Absolute host path - triggered.json must survive redeploys:
       - /opt/plex-path-auditor/config:/config
