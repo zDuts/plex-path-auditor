@@ -27,10 +27,5 @@ services:
       # the stale pre-remount view and every Plex path looks missing.
       # NOTE: changing propagation requires RECREATING the container
       # (Portainer redeploy / --force-recreate); a plain restart keeps old mounts.
-      - type: bind
-        source: /mnt
-        target: /mnt
-        read_only: true
-        bind:
-          propagation: rslave
+      - /mnt:/mnt:ro,rslave
     restart: unless-stopped
