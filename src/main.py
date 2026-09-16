@@ -62,6 +62,11 @@ def load_config() -> dict:
         # 1c39bf4d....mkv): Sonarr hasn't renamed/imported them yet and Plex
         # can't match them (no SxxExx to parse), so rescans never fix them.
         "skip_hash_names": os.getenv("SKIP_HASH_NAMES", "true").lower() == "true",
+        # Report files whose names carry foreign-dub language tokens
+        # (e.g. ITA,FRENCH,GERMAN). Matched as whole dot/space/underscore
+        # tokens, case-insensitive - 'ITA' won't match 'Vital' or the movie
+        # 'It' (token 'It' != 'ITA'). Empty = off. Prefer long tokens.
+        "dub_langs": {t.upper() for t in _parse_list(os.getenv("DUB_LANGS", ""))},
         # Max dirs triggered per run (0 = unlimited). Paces the backlog so
         # Plex/autoscan can absorb it - e.g. 200/run at 5s scan-delay ≈ 17min
         # of scan queue instead of an 8h thundering herd. Remainder next run.
@@ -163,6 +168,10 @@ def under_roots(path: str, roots: list[str]) -> bool:
 
 HASH_NAME = re.compile(r"^[a-f0-9]{32}\.")
 
+# Token separators in scene/p2p filenames (dots, spaces, underscores).
+# Hyphens excluded: release-group suffixes use them and would add noise.
+NAME_TOKEN = re.compile(r"[.\s_]+")
+
 
 def walk_media_files(roots: list[str], exts: set[str], skip_hash_names: bool = True) -> tuple[set[str], list[str]]:
     """Collect media files under roots (follows dir symlinks, never deletes anything).
@@ -195,6 +204,26 @@ def walk_media_files(roots: list[str], exts: set[str], skip_hash_names: bool = T
 
 
 SEASON_DIR = re.compile(r"[Ss]eason\s*(\d+)\s*$")
+
+
+def _detect_dubs(files: set[str], langs: set[str]) -> dict[str, list[str]]:
+    """Group files whose names carry a foreign-dub language token.
+
+    Tokenizes the basename (sans extension) on dots/spaces/underscores and
+    matches whole tokens case-insensitively, so 'ITA' hits
+    'Show.S01E01.ITA.1080p.mkv' but never 'Vital' or 'It (2017)'.
+    Scans both Plex-known and disk-only files - a dub is a dub either way.
+    """
+    by_lang: dict[str, list[str]] = {}
+    if not langs:
+        return by_lang
+    for p in files:
+        stem = os.path.basename(p).rsplit(".", 1)[0]
+        tokens = {t.upper() for t in NAME_TOKEN.split(stem) if t}
+        hit = sorted(tokens & langs)
+        for lang in hit:
+            by_lang.setdefault(lang, []).append(p)
+    return by_lang
 
 
 def _restore_sonarr_renaming(sonarr) -> None:
@@ -410,6 +439,17 @@ def run_once(config: dict) -> None:
         f"{n_unknown_files} unknown files in {len(unknown)} dirs, "
         f"{len(renames)} probable renames"
     )
+    if config["dub_langs"]:
+        dubs = _detect_dubs(plex_files | disk_files, config["dub_langs"])
+        total_dubs = sum(len(v) for v in dubs.values())
+        log.info(
+            f"Dub scan ({','.join(sorted(config['dub_langs']))}): "
+            f"{total_dubs} files hit across {len(dubs)} languages"
+            + (" - " + ", ".join(f"{k}={len(v)}" for k, v in sorted(dubs.items())) if dubs else "")
+        )
+        for lang in sorted(dubs):
+            for p in sorted(dubs[lang]):
+                log.info(f"Foreign dub [{lang}]: {p}")
     for d in stale:
         log.info(f"Stale Plex path, needs rescan: {d} ({len(stale_by_dir[d])} dead, e.g. {stale_by_dir[d][0]})")
     for d in unknown:

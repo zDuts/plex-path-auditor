@@ -20,6 +20,7 @@ services:
       - MAX_TRIGGERS=200  # max dirs per run, stale first (0 = unlimited)
       - MAX_STALE_PCT=25  # abort if more than this % of Plex paths is missing (dead mount guard; 100 = off)
       - SKIP_HASH_NAMES=true  # hold 32-hex placeholders out of the Plex diff (resolved Sonarr-side)
+      - DUB_LANGS=  # e.g. ITA,FRENCH,GERMAN,SPANISH - report foreign-dubbed files (empty = off)
       # Optional Sonarr: resolve + rename hash files (Plex can never match them).
       # If Sonarr's own Rename Episodes toggle is OFF, set SONARR_TOGGLE_RENAME
       # to flip it on around each run (enable -> preview -> fire -> wait ->

@@ -58,6 +58,7 @@ Sample compose — see `docker-compose.example.yml`. Start with `DRY_RUN=true`, 
 | `MAX_TRIGGERS` | no | `200` | Max dirs triggered per run, stale first (`0` = unlimited). Paces the backlog so Plex/autoscan can absorb it; remainder next run |
 | `MAX_STALE_PCT` | no | `25` | Abort the run if more than this % of Plex paths is missing (`100` = disable). Catches dead FUSE remounts where every symlink dangles — no triggers, no state write |
 | `SKIP_HASH_NAMES` | no | `true` | Hold 32-hex-char debrid placeholders out of the Plex diff (Plex can't match them — handled Sonarr-side instead) |
+| `DUB_LANGS` | no | — | Report files with foreign-dub language tokens, e.g. `ITA,FRENCH,GERMAN,SPANISH` (empty = off). Whole-token match, case-insensitive — `ITA` won't false-positive on `Vital` or the movie `It`. Dubs are reported only, never trigger rescans |
 | `SONARR_URL` | no | — | Sonarr base URL (e.g. `http://sonarr:8989`). Enables hash-file resolution; unset = placeholders only logged as skipped |
 | `SONARR_API_KEY` | no | — | Sonarr API key |
 | `SONARR_AUTO_RENAME` | no | `false` | Fire Sonarr `RenameFiles` for hash files (`false` = only log the rename preview). Renamed files get proper `SxxExx` names, then the normal Plex/autoscan path picks them up |
