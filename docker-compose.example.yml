@@ -18,6 +18,7 @@ services:
       - PAGE_SIZE=500  # Plex pagination window
       - BATCH_SIZE=50  # max dirs per autoscan request
       - MAX_TRIGGERS=200  # max dirs per run, stale first (0 = unlimited)
+      - MAX_STALE_PCT=25  # abort if more than this % of Plex paths is missing (dead mount guard; 100 = off)
     volumes:
       # Absolute host path - triggered.json must survive redeploys:
       - /opt/plex-path-auditor/config:/config

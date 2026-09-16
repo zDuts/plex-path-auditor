@@ -62,6 +62,11 @@ def load_config() -> dict:
         # Plex/autoscan can absorb it - e.g. 200/run at 5s scan-delay ≈ 17min
         # of scan queue instead of an 8h thundering herd. Remainder next run.
         "max_triggers": int(os.getenv("MAX_TRIGGERS", "200")),
+        # Mount sanity guard: abort the run if more than this % of Plex paths
+        # are missing (a remounted/dead FUSE mount makes EVERYTHING look stale -
+        # readdir still lists names while all symlink targets dangle).
+        # 100 = disable. No triggers fired, no state written on abort.
+        "max_stale_pct": float(os.getenv("MAX_STALE_PCT", "25")),
     }
 
 
@@ -211,6 +216,18 @@ def run_once(config: dict) -> None:
     wanted = stale + [d for d in unknown if d not in stale_set]
     n_stale_files = sum(len(v) for v in stale_by_dir.values())
     n_unknown_files = sum(len(v) for v in unknown_by_dir.values())
+    if not plex_files:
+        log.error("No Plex paths collected - aborting run (Plex unreachable or all sections empty?)")
+        return
+    stale_pct = 100.0 * n_stale_files / len(plex_files)
+    max_stale_pct = config["max_stale_pct"]
+    if stale_pct > max_stale_pct:
+        log.error(
+            f"ABORTING run: {stale_pct:.1f}% of Plex paths missing ({n_stale_files}/{len(plex_files)}), "
+            f"over MAX_STALE_PCT={max_stale_pct:g}. The mount is almost certainly dead "
+            "(e.g. FUSE remount with dangling symlinks) - not real drift. No triggers fired, state untouched."
+        )
+        return
     renames = _find_renames(stale_by_dir, unknown_by_dir)
     for d, old, new, basis in renames:
         log.info(f"Probable rename ({basis}): '{os.path.basename(old)}' -> '{os.path.basename(new)}' in {d}")
