@@ -58,6 +58,10 @@ def load_config() -> dict:
         "page_size": int(os.getenv("PAGE_SIZE", "500")),
         # Max dirs per autoscan request (URL length safety).
         "batch_size": int(os.getenv("BATCH_SIZE", "50")),
+        # Max dirs triggered per run (0 = unlimited). Paces the backlog so
+        # Plex/autoscan can absorb it - e.g. 200/run at 5s scan-delay ≈ 17min
+        # of scan queue instead of an 8h thundering herd. Remainder next run.
+        "max_triggers": int(os.getenv("MAX_TRIGGERS", "200")),
     }
 
 
@@ -202,7 +206,9 @@ def run_once(config: dict) -> None:
         unknown_by_dir.setdefault(os.path.dirname(p), []).append(p)
     stale = sorted(stale_by_dir)
     unknown = sorted(unknown_by_dir)
-    wanted = sorted(set(stale) | set(unknown))
+    stale_set = set(stale)
+    # Stale dirs first (broken Plex entries beat missing ones), then unknown-only.
+    wanted = stale + [d for d in unknown if d not in stale_set]
     n_stale_files = sum(len(v) for v in stale_by_dir.values())
     n_unknown_files = sum(len(v) for v in unknown_by_dir.values())
     renames = _find_renames(stale_by_dir, unknown_by_dir)
@@ -235,6 +241,11 @@ def run_once(config: dict) -> None:
     if not fresh:
         log.info("Complete: all mismatches in cooldown, nothing to trigger")
         return
+
+    max_triggers = max(0, config["max_triggers"])
+    if max_triggers and len(fresh) > max_triggers:
+        log.info(f"Capping this run at {max_triggers} of {len(fresh)} dirs (stale first); remainder next run")
+        fresh = fresh[:max_triggers]
 
     if config["dry_run"]:
         for d in fresh:

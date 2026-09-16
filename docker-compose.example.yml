@@ -17,6 +17,7 @@ services:
       - STATE_FILE=/config/triggered.json
       - PAGE_SIZE=500  # Plex pagination window
       - BATCH_SIZE=50  # max dirs per autoscan request
+      - MAX_TRIGGERS=200  # max dirs per run, stale first (0 = unlimited)
     volumes:
       # Absolute host path - triggered.json must survive redeploys:
       - /opt/plex-path-auditor/config:/config

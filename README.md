@@ -49,6 +49,7 @@ Sample compose — see `docker-compose.example.yml`. Start with `DRY_RUN=true`, 
 | `STATE_FILE` | no | `/config/triggered.json` | Dir → timestamp map (mount with absolute host path!) |
 | `PAGE_SIZE` | no | `500` | Plex pagination window |
 | `BATCH_SIZE` | no | `50` | Max dirs per autoscan request (URL-length safety) |
+| `MAX_TRIGGERS` | no | `200` | Max dirs triggered per run, stale first (`0` = unlimited). Paces the backlog so Plex/autoscan can absorb it; remainder next run |
 
 ## Building locally
 
