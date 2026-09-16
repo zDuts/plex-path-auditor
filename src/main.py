@@ -71,6 +71,12 @@ def load_config() -> dict:
         # readdir still lists names while all symlink targets dangle).
         # 100 = disable. No triggers fired, no state written on abort.
         "max_stale_pct": float(os.getenv("MAX_STALE_PCT", "25")),
+        # Optional Sonarr: resolve hash-named files to episodes and rename them
+        # (Plex can't match hash names, so autoscan rescans never fix those).
+        "sonarr_url": os.getenv("SONARR_URL", ""),
+        "sonarr_api_key": os.getenv("SONARR_API_KEY", ""),
+        # Fire Sonarr RenameFiles for hash files (false = only log the preview).
+        "sonarr_auto_rename": os.getenv("SONARR_AUTO_RENAME", "false").lower() == "true",
     }
 
 
@@ -152,27 +158,113 @@ def under_roots(path: str, roots: list[str]) -> bool:
 HASH_NAME = re.compile(r"^[a-f0-9]{32}\.")
 
 
-def walk_media_files(roots: list[str], exts: set[str], skip_hash_names: bool = True) -> set[str]:
-    """Collect media files under roots (follows dir symlinks, never deletes anything)."""
+def walk_media_files(roots: list[str], exts: set[str], skip_hash_names: bool = True) -> tuple[set[str], list[str]]:
+    """Collect media files under roots (follows dir symlinks, never deletes anything).
+
+    Returns (media_files, hash_files) where hash_files are debrid placeholders
+    (32-hex names) collected separately for Sonarr-side resolution.
+    """
     found: set[str] = set()
-    skipped_hash = 0
+    hash_files: list[str] = []
     for root in roots:
         if not os.path.isdir(root):
             log.warning(f"Scan root not a directory, skipping: {root}")
             continue
         for dirpath, _dirnames, filenames in os.walk(root, followlinks=True):
             for name in filenames:
-                if skip_hash_names and HASH_NAME.match(name):
-                    skipped_hash += 1
-                    continue
                 suffix = name.rsplit(".", 1)[-1].lower() if "." in name else ""
-                if suffix in exts:
-                    found.add(norm(os.path.join(dirpath, name)))
-                    if len(found) % 10000 == 0:
-                        log.info(f"... still walking disk: {len(found)} files so far (in {dirpath})")
-    if skipped_hash:
-        log.info(f"Skipped {skipped_hash} debrid placeholder files (32-hex names, not yet imported)")
-    return found
+                if suffix not in exts:
+                    continue
+                full = norm(os.path.join(dirpath, name))
+                if HASH_NAME.match(name):
+                    hash_files.append(full)
+                    if skip_hash_names:
+                        continue
+                found.add(full)
+                if len(found) % 10000 == 0:
+                    log.info(f"... still walking disk: {len(found)} files so far (in {dirpath})")
+    if skip_hash_names and hash_files:
+        log.info(f"Holding {len(hash_files)} debrid placeholder files for Sonarr-side resolution (not Plex-compared)")
+    return found, hash_files
+
+
+SEASON_DIR = re.compile(r"[Ss]eason\s*(\d+)\s*$")
+
+
+def _process_hash_files(config: dict, sonarr, hash_files: list[str], triggered: dict[str, float], now: float) -> None:
+    """Resolve debrid placeholder files via Sonarr and optionally rename them.
+
+    Hash-named files (no SxxExx to parse) can never be matched by Plex, so
+    autoscan rescans can't fix them - but Sonarr already links each file to an
+    episode. Groups them by (series, season), previews via GET /api/v3/rename,
+    and fires RenameFiles when SONARR_AUTO_RENAME=true. Cooldown keys look like
+    'sonarr:{seriesId}:{season}' and never enter the autoscan batch.
+    """
+    if not hash_files:
+        return
+    try:
+        series = sonarr.get_series()
+    except Exception as e:
+        log.error(f"Sonarr series list failed: {e}")
+        return
+    by_path: dict[str, tuple[int, str]] = {}
+    for s in series:
+        try:
+            by_path[norm(s["path"])] = (int(s["id"]), s.get("title", "?"))
+        except (KeyError, TypeError, ValueError):
+            continue
+    groups: dict[tuple[int, int], dict] = {}
+    unmapped: set[str] = set()
+    for f in hash_files:
+        season_dir = os.path.dirname(f)
+        show_dir = os.path.dirname(season_dir)
+        m = SEASON_DIR.search(os.path.basename(season_dir))
+        hit = by_path.get(show_dir)
+        if not hit or not m:
+            if hit is None:
+                unmapped.add(show_dir)
+            continue
+        key = (hit[0], int(m.group(1)))
+        g = groups.setdefault(key, {"title": hit[1], "files": []})
+        g["files"].append(f)
+    for show_dir in sorted(unmapped):
+        log.warning(f"Hash files under unmapped show dir (no Sonarr series path match): {show_dir}")
+    cooldown_s = config["cooldown_hours"] * 3600
+    for (series_id, season), g in sorted(groups.items()):
+        state_key = f"sonarr:{series_id}:{season}"
+        if now - triggered.get(state_key, 0) < cooldown_s:
+            log.info(f"Skipping Sonarr rename for {g['title']} season {season} (cooldown)")
+            continue
+        try:
+            preview = sonarr.get_renames(series_id, season)
+        except Exception as e:
+            log.error(f"Sonarr rename preview failed for {g['title']} S{season}: {e}")
+            continue
+        mine = {norm(os.path.basename(p)) for p in g["files"]}
+        hits = [r for r in preview
+                if isinstance(r, dict) and norm(os.path.basename(r.get("existingPath", ""))) in mine]
+        if not hits:
+            log.info(
+                f"Sonarr reports nothing to rename for {g['title']} season {season} "
+                f"({len(g['files'])} hash files - may need manual import in Sonarr first)"
+            )
+            if not config["dry_run"]:
+                triggered[state_key] = now
+            continue
+        for r in hits:
+            log.info(f"Sonarr rename [{g['title']} S{season}]: '{os.path.basename(r['existingPath'])}' -> '{os.path.basename(r['newPath'])}'")
+        if config["dry_run"]:
+            log.info(f"[DRY RUN] Would fire Sonarr RenameFiles for {len(hits)} files ({g['title']} S{season})")
+            continue
+        if not config["sonarr_auto_rename"]:
+            log.info(f"Set SONARR_AUTO_RENAME=true to apply ({g['title']} S{season})")
+            continue
+        ids = [r["episodeFileId"] for r in hits if r.get("episodeFileId") is not None]
+        if ids and sonarr.rename_files(series_id, ids):
+            log.info(f"Sonarr RenameFiles queued for {len(ids)} files ({g['title']} S{season}) - rescan will pick them up")
+            triggered[state_key] = now
+        else:
+            log.error(f"Sonarr RenameFiles failed for {g['title']} S{season}")
 
 
 def run_once(config: dict) -> None:
@@ -215,8 +307,21 @@ def run_once(config: dict) -> None:
     # --- Disk side (readdir walk - fast unless the FUSE mount is unhealthy) ---
     log.info("Walking disk under scan roots...")
     t0 = time.time()
-    disk_files = walk_media_files(roots, config["media_exts"], config["skip_hash_names"])
+    disk_files, hash_files = walk_media_files(roots, config["media_exts"], config["skip_hash_names"])
     log.info(f"Found {len(disk_files)} media files on disk under scan roots ({time.time() - t0:.0f}s)")
+
+    # --- Sonarr side: resolve hash-named placeholders (Plex can never match these) ---
+    now = time.time()
+    triggered = load_state(config["state_file"])
+    if config["sonarr_url"] and config["sonarr_api_key"]:
+        from .clients import SonarrClient
+
+        try:
+            _process_hash_files(config, SonarrClient(config["sonarr_url"], config["sonarr_api_key"]), hash_files, triggered, now)
+        except Exception as e:
+            log.error(f"Sonarr hash-file pass failed: {e}")
+    elif config["sonarr_url"]:
+        log.warning("SONARR_URL set without SONARR_API_KEY - skipping Sonarr hash-file resolution")
 
     # --- Diff (both directions collapse to directory scans) ---
     # NOTE: os.path.exists() stats every Plex path - on a healthy mount this
@@ -269,10 +374,8 @@ def run_once(config: dict) -> None:
         log.info("Complete: everything in sync, nothing to trigger")
         return
 
-    # --- Cooldown filter ---
-    now = time.time()
+    # --- Cooldown filter (triggered{} already holds Sonarr keys from above) ---
     cooldown_s = config["cooldown_hours"] * 3600
-    triggered = load_state(config["state_file"])
     fresh = [d for d in wanted if now - triggered.get(d, 0) >= cooldown_s]
     skipped = len(wanted) - len(fresh)
     if skipped:
@@ -306,7 +409,8 @@ def run_once(config: dict) -> None:
 
     for d in ok_dirs:
         triggered[d] = now
-    if ok_dirs and not config["dry_run"]:
+    if not config["dry_run"]:
+        # Persists autoscan marks AND any Sonarr cooldown keys set above.
         save_state(config["state_file"], triggered)
     log.info(f"Complete: triggered {len(ok_dirs)}/{len(fresh)} dirs ({skipped} in cooldown)")
 

@@ -74,6 +74,50 @@ class PlexClient:
         return files
 
 
+class SonarrClient:
+    """Client for Sonarr API (hash-file resolution + rename)."""
+
+    def __init__(self, url: str, api_key: str):
+        self.url = url.rstrip("/")
+        self.headers = {"X-Api-Key": api_key}
+
+    def get_series(self) -> list[dict]:
+        """Return all series (each with id, title, path)."""
+        resp = requests.get(f"{self.url}/api/v3/series", headers=self.headers, timeout=30)
+        resp.raise_for_status()
+        data = resp.json()
+        return data if isinstance(data, list) else []
+
+    def get_renames(self, series_id: int, season_number: int) -> list[dict]:
+        """Preview renames for a season: episodeFileId, existingPath, newPath."""
+        resp = requests.get(
+            f"{self.url}/api/v3/rename",
+            params={"seriesId": series_id, "seasonNumber": season_number},
+            headers=self.headers,
+            timeout=30,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return data if isinstance(data, list) else []
+
+    def rename_files(self, series_id: int, file_ids: list[int]) -> bool:
+        """Queue a RenameFiles command for episode file IDs. True on 2xx."""
+        try:
+            resp = requests.post(
+                f"{self.url}/api/v3/command",
+                headers=self.headers,
+                json={"name": "RenameFiles", "seriesId": series_id, "files": file_ids},
+                timeout=30,
+            )
+            if 200 <= resp.status_code < 300:
+                return True
+            log.warning(f"sonarr rename command returned {resp.status_code}: {resp.text[:200]}")
+            return False
+        except Exception as e:
+            log.warning(f"sonarr rename command failed: {e}")
+            return False
+
+
 class AutoscanClient:
     """Client for Autoscan manual trigger (POST /triggers/manual?dir=...)."""
 

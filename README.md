@@ -15,6 +15,10 @@
 
 Only what you watch is irrelevant here — this audits the whole library by design. Scope it with `SCAN_ROOTS`.
 
+## Sonarr hash-file renames
+
+Files like `1c39bf4d….mkv` are debrid placeholders Sonarr hasn't renamed yet — Plex can't parse an episode from a hash, so no rescan will ever fix them. With `SONARR_URL` + `SONARR_API_KEY` set, the auditor matches them to series/seasons via Sonarr's series paths, previews with `GET /api/v3/rename?seriesId&seasonNumber`, and (with `SONARR_AUTO_RENAME=true`) fires `RenameFiles` for exactly those file IDs. Rename cooldowns reuse the state file (`sonarr:{seriesId}:{season}` keys, same `COOLDOWN_HOURS`) and never enter the autoscan batch. If Sonarr reports nothing to rename, the files likely need manual import in Sonarr first.
+
 ## Requirements
 
 - Autoscan with a working `manual` trigger. Verify first:
@@ -51,7 +55,10 @@ Sample compose — see `docker-compose.example.yml`. Start with `DRY_RUN=true`, 
 | `BATCH_SIZE` | no | `50` | Max dirs per autoscan request (URL-length safety) |
 | `MAX_TRIGGERS` | no | `200` | Max dirs triggered per run, stale first (`0` = unlimited). Paces the backlog so Plex/autoscan can absorb it; remainder next run |
 | `MAX_STALE_PCT` | no | `25` | Abort the run if more than this % of Plex paths is missing (`100` = disable). Catches dead FUSE remounts where every symlink dangles — no triggers, no state write |
-| `SKIP_HASH_NAMES` | no | `true` | Skip debrid placeholder files (32-hex-char names Sonarr hasn't renamed yet — Plex can't match them, rescans never fix them) |
+| `SKIP_HASH_NAMES` | no | `true` | Hold 32-hex-char debrid placeholders out of the Plex diff (Plex can't match them — handled Sonarr-side instead) |
+| `SONARR_URL` | no | — | Sonarr base URL (e.g. `http://sonarr:8989`). Enables hash-file resolution; unset = placeholders only logged as skipped |
+| `SONARR_API_KEY` | no | — | Sonarr API key |
+| `SONARR_AUTO_RENAME` | no | `false` | Fire Sonarr `RenameFiles` for hash files (`false` = only log the rename preview). Renamed files get proper `SxxExx` names, then the normal Plex/autoscan path picks them up |
 
 ## Building locally
 

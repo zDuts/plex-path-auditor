@@ -19,7 +19,11 @@ services:
       - BATCH_SIZE=50  # max dirs per autoscan request
       - MAX_TRIGGERS=200  # max dirs per run, stale first (0 = unlimited)
       - MAX_STALE_PCT=25  # abort if more than this % of Plex paths is missing (dead mount guard; 100 = off)
-      - SKIP_HASH_NAMES=true  # skip 32-hex debrid placeholders Sonarr hasn't imported yet
+      - SKIP_HASH_NAMES=true  # hold 32-hex placeholders out of the Plex diff (resolved Sonarr-side)
+      # Optional Sonarr: resolve + rename hash files (Plex can never match them)
+      - SONARR_URL=http://your-sonarr:8989
+      - SONARR_API_KEY=your_sonarr_api_key
+      - SONARR_AUTO_RENAME=false  # true = fire RenameFiles (false = log preview only)
     volumes:
       # Absolute host path - triggered.json must survive redeploys:
       - /opt/plex-path-auditor/config:/config
