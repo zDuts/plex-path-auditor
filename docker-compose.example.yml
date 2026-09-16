@@ -19,6 +19,7 @@ services:
       - BATCH_SIZE=50  # max dirs per autoscan request
       - MAX_TRIGGERS=200  # max dirs per run, stale first (0 = unlimited)
       - MAX_STALE_PCT=25  # abort if more than this % of Plex paths is missing (dead mount guard; 100 = off)
+      - SKIP_HASH_NAMES=true  # skip 32-hex debrid placeholders Sonarr hasn't imported yet
     volumes:
       # Absolute host path - triggered.json must survive redeploys:
       - /opt/plex-path-auditor/config:/config

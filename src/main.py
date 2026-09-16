@@ -58,6 +58,10 @@ def load_config() -> dict:
         "page_size": int(os.getenv("PAGE_SIZE", "500")),
         # Max dirs per autoscan request (URL length safety).
         "batch_size": int(os.getenv("BATCH_SIZE", "50")),
+        # Skip debrid placeholder files (32-hex-char names like
+        # 1c39bf4d....mkv): Sonarr hasn't renamed/imported them yet and Plex
+        # can't match them (no SxxExx to parse), so rescans never fix them.
+        "skip_hash_names": os.getenv("SKIP_HASH_NAMES", "true").lower() == "true",
         # Max dirs triggered per run (0 = unlimited). Paces the backlog so
         # Plex/autoscan can absorb it - e.g. 200/run at 5s scan-delay ≈ 17min
         # of scan queue instead of an 8h thundering herd. Remainder next run.
@@ -145,20 +149,29 @@ def under_roots(path: str, roots: list[str]) -> bool:
     return False
 
 
-def walk_media_files(roots: list[str], exts: set[str]) -> set[str]:
+HASH_NAME = re.compile(r"^[a-f0-9]{32}\.")
+
+
+def walk_media_files(roots: list[str], exts: set[str], skip_hash_names: bool = True) -> set[str]:
     """Collect media files under roots (follows dir symlinks, never deletes anything)."""
     found: set[str] = set()
+    skipped_hash = 0
     for root in roots:
         if not os.path.isdir(root):
             log.warning(f"Scan root not a directory, skipping: {root}")
             continue
         for dirpath, _dirnames, filenames in os.walk(root, followlinks=True):
             for name in filenames:
+                if skip_hash_names and HASH_NAME.match(name):
+                    skipped_hash += 1
+                    continue
                 suffix = name.rsplit(".", 1)[-1].lower() if "." in name else ""
                 if suffix in exts:
                     found.add(norm(os.path.join(dirpath, name)))
                     if len(found) % 10000 == 0:
                         log.info(f"... still walking disk: {len(found)} files so far (in {dirpath})")
+    if skipped_hash:
+        log.info(f"Skipped {skipped_hash} debrid placeholder files (32-hex names, not yet imported)")
     return found
 
 
@@ -202,7 +215,7 @@ def run_once(config: dict) -> None:
     # --- Disk side (readdir walk - fast unless the FUSE mount is unhealthy) ---
     log.info("Walking disk under scan roots...")
     t0 = time.time()
-    disk_files = walk_media_files(roots, config["media_exts"])
+    disk_files = walk_media_files(roots, config["media_exts"], config["skip_hash_names"])
     log.info(f"Found {len(disk_files)} media files on disk under scan roots ({time.time() - t0:.0f}s)")
 
     # --- Diff (both directions collapse to directory scans) ---

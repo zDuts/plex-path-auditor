@@ -51,6 +51,7 @@ Sample compose — see `docker-compose.example.yml`. Start with `DRY_RUN=true`, 
 | `BATCH_SIZE` | no | `50` | Max dirs per autoscan request (URL-length safety) |
 | `MAX_TRIGGERS` | no | `200` | Max dirs triggered per run, stale first (`0` = unlimited). Paces the backlog so Plex/autoscan can absorb it; remainder next run |
 | `MAX_STALE_PCT` | no | `25` | Abort the run if more than this % of Plex paths is missing (`100` = disable). Catches dead FUSE remounts where every symlink dangles — no triggers, no state write |
+| `SKIP_HASH_NAMES` | no | `true` | Skip debrid placeholder files (32-hex-char names Sonarr hasn't renamed yet — Plex can't match them, rescans never fix them) |
 
 ## Building locally
 
