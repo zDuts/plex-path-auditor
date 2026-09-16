@@ -81,6 +81,17 @@ class SonarrClient:
         self.url = url.rstrip("/")
         self.headers = {"X-Api-Key": api_key}
 
+    def get_naming(self) -> dict:
+        """Return Sonarr naming config (renameEpisodes bool). Empty dict on failure."""
+        try:
+            resp = requests.get(f"{self.url}/api/v3/config/naming", headers=self.headers, timeout=30)
+            resp.raise_for_status()
+            data = resp.json()
+            return data if isinstance(data, dict) else {}
+        except Exception as e:
+            log.debug(f"sonarr naming config failed: {e}")
+            return {}
+
     def get_series(self) -> list[dict]:
         """Return all series (each with id, title, path)."""
         resp = requests.get(f"{self.url}/api/v3/series", headers=self.headers, timeout=30)

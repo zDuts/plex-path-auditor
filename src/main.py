@@ -202,6 +202,15 @@ def _process_hash_files(config: dict, sonarr, hash_files: list[str], triggered: 
     """
     if not hash_files:
         return
+    naming = sonarr.get_naming()
+    if naming and not naming.get("renameEpisodes", True):
+        log.info(
+            "Sonarr episode renaming is OFF - rename preview would always be empty, "
+            "skipping it (hash files still flow to autoscan when SKIP_HASH_NAMES=false)"
+        )
+        if config["sonarr_auto_rename"]:
+            log.warning("SONARR_AUTO_RENAME=true but Sonarr renaming is OFF - rename commands will no-op")
+        return
     try:
         series = sonarr.get_series()
     except Exception as e:

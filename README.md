@@ -19,6 +19,8 @@ Only what you watch is irrelevant here — this audits the whole library by desi
 
 Files like `1c39bf4d….mkv` are debrid placeholders Sonarr hasn't renamed yet — Plex can't parse an episode from a hash, so no rescan will ever fix them. With `SONARR_URL` + `SONARR_API_KEY` set, the auditor matches them to series/seasons via Sonarr's series paths, previews with `GET /api/v3/rename?seriesId&seasonNumber`, and (with `SONARR_AUTO_RENAME=true`) fires `RenameFiles` for exactly those file IDs. Rename cooldowns reuse the state file (`sonarr:{seriesId}:{season}` keys, same `COOLDOWN_HOURS`) and never enter the autoscan batch. If Sonarr reports nothing to rename, the files likely need manual import in Sonarr first.
 
+If Sonarr's own **Rename Episodes** toggle is off (checked via `GET /api/v3/config/naming`), the preview would always be empty, so the auditor skips it with one log line instead of pointless per-season calls. To still get those directories rescanned, set `SKIP_HASH_NAMES=false` — hash files rejoin the normal Plex diff as unknown files and their dirs go to autoscan. Note Plex still can't match a hash name, so those dirs re-fire every cooldown window until Sonarr renames them; that's the price of the rescan coverage.
+
 ## Requirements
 
 - Autoscan with a working `manual` trigger. Verify first:
