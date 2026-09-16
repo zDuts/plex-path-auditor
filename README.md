@@ -22,7 +22,7 @@ Only what you watch is irrelevant here — this audits the whole library by desi
   curl -X POST 'http://your-autoscan:3030/triggers/manual?dir=%2Fmnt%2Fplex%2FTV' -u your_autoscan_user
   ```
 - Autoscan `anchors` must resolve — if the anchor file is missing, Autoscan silently sends nothing and this tool's triggers go nowhere
-- The auditor needs the **same `/mnt` view as Plex** (mount `/mnt:/mnt:ro`)
+- The auditor needs the **same `/mnt` view as Plex**, mounted with **`rslave` propagation** (see compose). With Docker's default `rprivate`, any host remount (rclone/nzbdav re-pull) leaves the container staring at a stale, pre-remount filesystem — every Plex path then looks missing and the run either stalls on dead stats or fires thousands of bogus triggers (the `MAX_STALE_PCT` guard aborts that case). Apply `rslave` to **every** container bind-mounting `/mnt` (Plex included), and recreate containers after host remounts — plain restarts keep old mounts
 
 ## Installation
 

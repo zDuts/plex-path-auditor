@@ -22,6 +22,15 @@ services:
     volumes:
       # Absolute host path - triggered.json must survive redeploys:
       - /opt/plex-path-auditor/config:/config
-      # Same view of the media as Plex (read-only is enough):
-      - /mnt:/mnt:ro
+      # rslave (not default rprivate): host remounts (e.g. infinidysk re-pull)
+      # propagate INTO the container. With rprivate the container keeps showing
+      # the stale pre-remount view and every Plex path looks missing.
+      # NOTE: changing propagation requires RECREATING the container
+      # (Portainer redeploy / --force-recreate); a plain restart keeps old mounts.
+      - type: bind
+        source: /mnt
+        target: /mnt
+        read_only: true
+        bind:
+          propagation: rslave
     restart: unless-stopped
