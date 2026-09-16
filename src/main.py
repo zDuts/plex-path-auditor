@@ -157,6 +157,8 @@ def walk_media_files(roots: list[str], exts: set[str]) -> set[str]:
                 suffix = name.rsplit(".", 1)[-1].lower() if "." in name else ""
                 if suffix in exts:
                     found.add(norm(os.path.join(dirpath, name)))
+                    if len(found) % 10000 == 0:
+                        log.info(f"... still walking disk: {len(found)} files so far (in {dirpath})")
     return found
 
 
@@ -197,15 +199,23 @@ def run_once(config: dict) -> None:
     if out_of_scope:
         log.info(f"Ignored {out_of_scope} Plex paths outside SCAN_ROOTS")
 
-    # --- Disk side ---
+    # --- Disk side (readdir walk - fast unless the FUSE mount is unhealthy) ---
+    log.info("Walking disk under scan roots...")
+    t0 = time.time()
     disk_files = walk_media_files(roots, config["media_exts"])
-    log.info(f"Found {len(disk_files)} media files on disk under scan roots")
+    log.info(f"Found {len(disk_files)} media files on disk under scan roots ({time.time() - t0:.0f}s)")
 
     # --- Diff (both directions collapse to directory scans) ---
+    # NOTE: os.path.exists() stats every Plex path - on a healthy mount this
+    # takes ~1min for 50k files. If logs stall here, the FUSE mount is sick
+    # (e.g. host remount without restarting this container -> stale view).
+    log.info(f"Checking {len(plex_files)} Plex paths against disk...")
+    t0 = time.time()
     stale_by_dir: dict[str, list[str]] = {}
     for p in plex_files:
         if not os.path.exists(p):
             stale_by_dir.setdefault(os.path.dirname(p), []).append(p)
+    log.info(f"Path check finished in {time.time() - t0:.0f}s")
     unknown_by_dir: dict[str, list[str]] = {}
     for p in disk_files - plex_files:
         unknown_by_dir.setdefault(os.path.dirname(p), []).append(p)
